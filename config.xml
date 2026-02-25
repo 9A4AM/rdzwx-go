@@ -1,5 +1,5 @@
 <?xml version='1.0' encoding='utf-8'?>
-<widget id="de.dl9rdz" version="1.1.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0"
+<widget id="de.dl9rdz" version="1.2.0pv2" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0"
     xmlns:android="schemas.android.com/apk/res/android">
     <name>rdzSonde</name>
     <description>
@@ -30,17 +30,49 @@
         <resource-file src="res/build-extras.gradle" target="app/build-extras.gradle"/>
     </platform>
     <icon src="res/icon512.png"/>
+    <platform name="ios">
+        <!-- Allow HTTP connections to TTGO devices (equivalent to Android's usesCleartextTraffic) -->
+        <edit-config file="*-Info.plist" mode="merge" target="NSAppTransportSecurity">
+            <dict>
+                <key>NSAllowsArbitraryLoads</key>
+                <true/>
+            </dict>
+        </edit-config>
+        <!-- iPhone icons -->
+        <icon src="res/ios/icon-20@2x.png" width="40" height="40" />
+        <icon src="res/ios/icon-20@3x.png" width="60" height="60" />
+        <icon src="res/ios/icon-29@2x.png" width="58" height="58" />
+        <icon src="res/ios/icon-29@3x.png" width="87" height="87" />
+        <icon src="res/ios/icon-40@2x.png" width="80" height="80" />
+        <icon src="res/ios/icon-40@3x.png" width="120" height="120" />
+        <icon src="res/ios/icon-60@2x.png" width="120" height="120" />
+        <icon src="res/ios/icon-60@3x.png" width="180" height="180" />
+        <!-- iPad icons -->
+        <icon src="res/ios/icon-20.png" width="20" height="20" />
+        <icon src="res/ios/icon-29.png" width="29" height="29" />
+        <icon src="res/ios/icon-40.png" width="40" height="40" />
+        <icon src="res/ios/icon-76.png" width="76" height="76" />
+        <icon src="res/ios/icon-76@2x.png" width="152" height="152" />
+        <icon src="res/ios/icon-83.5@2x.png" width="167" height="167" />
+        <!-- App Store -->
+        <icon src="res/ios/icon-1024.png" width="1024" height="1024" />
+    </platform>
     <platform name="electron">
       <preference name="ElectronSettingsFilePath" value="res/electron/settings.json" />
     </platform>
 
     <preference name="GradlePluginKotlinEnabled" value="true" />
     <preference name="GradlePluginKotlinCodeStyle" value="official" />
-    <preference name="GradlePluginKotlinVersion" value="1.7.21" />
+    <preference name="GradlePluginKotlinVersion" value="1.8.22" />
 
     <preference name="android-minSdkVersion" value="23" />
     <preference name="android-targetSdkVersion" value="35" />
+    <preference name="android-compileSdkVersion" value="35" />
+
+    <preference name="SplashScreen" value="none" />
 
     <preference name="AndroidInsecureFileModeEnabled" value="true" />
+
+    <hook type="before_prepare" src="hooks/copy_version.js" />
 
 </widget>

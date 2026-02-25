@@ -80,21 +80,31 @@ function onDeviceReady() {
 
     console.log('Running cordova-' + cordova.platformId + '@' + cordova.version);
 
-    // Check for updates
-    fetch("https://raw.githubusercontent.com/dl9rdz/rdzwx-go/main/version.json")
-    .then(response => response.json())
-    .then(data => {
-      console.log('Success:', data);
-          if(data.version > "1.0.7") {
-             if(window.confirm("New version "+ data.version + " available! Download?")) {
-		console.log("opening "+data.url);
-		cordova.InAppBrowser.open(data.url, "_system");
-	     }
-	  }
-    })
-    .catch((error) => {
-      console.error('Error:', error);
-    });
+    // Load local version and set it in the UI
+    if (window.APP_VERSION) {
+        var localVersion = window.APP_VERSION;
+
+        // Update title and h2 with current version
+        document.title = 'rdzSonde v' + localVersion.version;
+        var h2Element = document.querySelector('#toolbar h2');
+        if (h2Element) {
+            h2Element.textContent = 'rdzSonde v' + localVersion.version;
+        }
+
+        // Check for updates from remote
+        fetch("https://raw.githubusercontent.com/dl9rdz/rdzwx-go/main/version.json")
+        .then(response => response.json())
+        .then(remoteVersion => {
+            if(remoteVersion.version > localVersion.version) {
+                if(window.confirm("New version "+ remoteVersion.version + " available! Download?")) {
+                    cordova.InAppBrowser.open(remoteVersion.url, "_system");
+                }
+            }
+        })
+        .catch((error) => {
+            console.error('Error checking for updates:', error);
+        });
+    }
 
     // Some map tile sources
     var tfapikey = "01be52efbdc14d38beac233a870c8d4f";
@@ -653,30 +663,28 @@ function getPrediction(refobj) {
     } else {
       tParams["descent_rate"] = usecurrent ? calc_drag( -vs, refobj.obj.alt, desc ) : desc;
     }
-    const xhr = new XMLHttpRequest();
     const url = TAWHIRI + formatParams(tParams);
-    xhr.onreadystatechange = function() {
-        if(xhr.readyState === 4) { 
-	    if( (xhr.status/100)!=2 ) {
-		alert("Request failed: "+xhr.statusText);
-		return;
-	    }
-	    var pred = JSON.parse(xhr.response);
+    console.log("getPrediction: fetching " + url);
+
+    RdzWx.fetchUrl(url, function(response) {
+        // Success callback
+        try {
+            var pred = JSON.parse(response);
             var traj0 = pred.prediction[0].trajectory;  // 0 is ascent, 1 is descent...
             var traj1 = pred.prediction[1].trajectory;  // 0 is ascent, 1 is descent...
-	    var latlons = [];
-	    traj0.forEach( p => latlons.push( [p.latitude, wrap(p.longitude)] ) );
-	    traj1.forEach( p => latlons.push( [p.latitude, wrap(p.longitude)] ) );
-	    //alert("path: "+JSON.stringify(traj));
-      	    poly = L.polyline(latlons, { opacity: 0.7, color: '#EE0000', dashArray: '8, 6'} );
+            var latlons = [];
+            traj0.forEach( p => latlons.push( [p.latitude, wrap(p.longitude)] ) );
+            traj1.forEach( p => latlons.push( [p.latitude, wrap(p.longitude)] ) );
+            //alert("path: "+JSON.stringify(traj));
+            poly = L.polyline(latlons, { opacity: 0.7, color: '#EE0000', dashArray: '8, 6'} );
             poly.addTo(map);
-	    if( refobj.pred  ) { refobj.pred.remove(map); }
+            if( refobj.pred  ) { refobj.pred.remove(map); }
             refobj.pred = poly;
-	    if( refobj.land ) { refobj.land.remove(map); }
-	    refobj.land = new L.marker(latlons.slice(-1)[0], {icon: landingIcon,
+            if( refobj.land ) { refobj.land.remove(map); }
+            refobj.land = new L.marker(latlons.slice(-1)[0], {icon: landingIcon,
               contextmenu: true,
               contextmenuItems: [{
-	        text: "Zoom to location",
+                text: "Zoom to location",
                 callback: function(e) { b=new L.LatLngBounds([refobj.land.getLatLng()]); map.fitBounds(b, {maxZoom: 16}); }
               }, {
                 separator: true
@@ -685,29 +693,32 @@ function getPrediction(refobj) {
                 callback: function(e) { ll=refobj.land.getLatLng(); uri="geo:0:0?q="+ll.lat+","+ll.lng+"(X-"+refobj.obj.id+")"; RdzWx.showmap(uri, function(){}); }
               }]
             });
-	    refobj.land.addTo(map);
+            refobj.land.addTo(map);
 
-	    if( refobj.burst ) { refobj.burst.remove(map); }
-	    if( vs>0 ) { // still climbing, so add burst mark
-	       var b = traj0.slice(-1)[0];
-	       refobj.burst = new L.marker( [b.latitude, b.longitude], {icon: burstIcon});
+            if( refobj.burst ) { refobj.burst.remove(map); }
+            if( vs>0 ) { // still climbing, so add burst mark
+               var b = traj0.slice(-1)[0];
+               refobj.burst = new L.marker( [b.latitude, b.longitude], {icon: burstIcon});
                refobj.burst.addTo(map);
             }
-	    var lastpt = traj1.splice(-1)[0];
-	    lastpt.datetime = new Date(lastpt.datetime).toISOString().split(".")[0] + "Z";
-	    var popup = '<div class="pop-header"><img src="img/landing.png"><h4> Landing Point </h4></div>' +
-                       '<strong>Time: ' + lastpt.datetime + '</strong><br/>' +
-                       '<strong>(' + new Date(lastpt.datetime).toTimeString().split(" (")[0] + ')</strong><br/>' +
-                       '<p> Altitude: ' + lastpt.altitude.toFixed(1) + ' m'+ 
-                       '</br>Asc. Rate: ' + tParams["ascent_rate"].toFixed(2)  + ' m/s'+
-                       '</br>Burst: ' + tParams["burst_altitude"]  + ' m'+
-                       '</br>Desc. Rate: ' + tParams["descent_rate"].toFixed(2) + ' m/s</p>' +
-                       '';
-	    refobj.land.bindPopup(popup);
+            var lastpt = traj1.splice(-1)[0];
+            lastpt.datetime = new Date(lastpt.datetime).toISOString().split(".")[0] + "Z";
+            var popup = '<div class="pop-header"><img src="img/landing.png"><h4> Landing Point </h4></div>' +
+                           '<strong>Time: ' + lastpt.datetime + '</strong><br/>' +
+                           '<strong>(' + new Date(lastpt.datetime).toTimeString().split(" (")[0] + ')</strong><br/>' +
+                           '<p> Altitude: ' + lastpt.altitude.toFixed(1) + ' m'+
+                           '</br>Asc. Rate: ' + tParams["ascent_rate"].toFixed(2)  + ' m/s'+
+                           '</br>Burst: ' + tParams["burst_altitude"]  + ' m'+
+                           '</br>Desc. Rate: ' + tParams["descent_rate"].toFixed(2) + ' m/s</p>' +
+                           '';
+            refobj.land.bindPopup(popup);
+        } catch(e) {
+            alert("Failed to parse prediction response: " + e.message);
         }
-    }
-    xhr.open('GET', url, true);
-    xhr.send(null);
+    }, function(error) {
+        // Error callback
+        alert("Prediction request failed: " + error);
+    });
 }
 
 function callBack(arg) {
@@ -766,6 +777,38 @@ function periodicStatusCheck() {
     }
 }
 
+function updateConnectionStatus(connected, ip) {
+    const statusEl = document.getElementById('node-status-text');
+    if (!statusEl) return;
+
+    if (connected && ip) {
+        statusEl.textContent = 'Connected to ' + ip;
+        statusEl.style.color = '#00AA00';
+    } else {
+        statusEl.textContent = 'Disconnected';
+        statusEl.style.color = '#999';
+    }
+}
+
+function updateMdnsStatus(status, details) {
+    const statusEl = document.getElementById('mdns-status-text');
+    if (!statusEl) return;
+
+    if (status === 'searching') {
+        statusEl.textContent = 'Searching...';
+        statusEl.style.color = '#FF8800';
+    } else if (status === 'found') {
+        statusEl.textContent = 'Device found: ' + (details || '');
+        statusEl.style.color = '#00AA00';
+    } else if (status === 'active') {
+        statusEl.textContent = 'Active';
+        statusEl.style.color = '#00AA00';
+    } else {
+        statusEl.textContent = 'Not active';
+        statusEl.style.color = '#999';
+    }
+}
+
 function update(obj) {
     if(!ready || !map) {
  	console.log("not ready");
@@ -776,10 +819,18 @@ function update(obj) {
 	if(obj.msgtype == "ttgostatus") {
 	    ttgoStatus.ttgourl = 'http://' + obj.ip;
 	    ttgoStatus.state(obj.state)
-	    if(obj.state=="offline") { infobox.setStatus(1); }
+	    if(obj.state=="offline") {
+	        infobox.setStatus(1);
+	        updateConnectionStatus(false, null);
+	    } else {
+	        updateConnectionStatus(true, obj.ip);
+	    }
         }
 	if(obj.msgtype == "gps") {
 	    updateMypos(obj);
+	}
+	if(obj.msgtype == "mdnsstatus") {
+	    updateMdnsStatus(obj.status, obj.details);
 	}
 	console.log("update: type="+obj.msgtype);
 	return;
@@ -941,9 +992,11 @@ function setupTTGOconfig() {
     if (savedState === 'auto') {
         document.getElementById('auto-discovery').checked = true;
         document.getElementById('manual-address').style.display = 'none';
+        updateMdnsStatus('searching', null);
     } else if (savedState === 'manual') {
         document.getElementById('manual-entry').checked = true;
         document.getElementById('manual-address').style.display = 'block';
+        updateMdnsStatus('inactive', null);
     }
 
     if (savedAddr) {
@@ -961,8 +1014,10 @@ function setupTTGOconfig() {
             localStorage.setItem('connectionState', state );
             if (state === 'manual') {
                 manualAddressInput.style.display = 'block';
+                updateMdnsStatus('inactive', null);
             } else {
                 manualAddressInput.style.display = 'none';
+                updateMdnsStatus('searching', null);
             }
             updateTTGOaddr(state, addr);
         });

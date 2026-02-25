@@ -1,0 +1,279 @@
+name: Release iOS IPA with AltStore
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.2.0
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.2.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release iOS App
+    runs-on: macos-14
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0  # Fetch all history and tags for changelog generation
+
+    - name: Set version variable
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION="${{ github.event.inputs.version }}"
+          echo "version=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_num=${VERSION}" >> $GITHUB_OUTPUT
+        else
+          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION_NUM=${VERSION#v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_num=${VERSION_NUM}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install Cordova CLI
+      run: npm install -g cordova@latest
+
+    - name: Install ios-deploy
+      run: npm install -g ios-deploy
+
+    - name: Install CocoaPods
+      run: |
+        sudo gem install cocoapods
+        pod --version
+
+    - name: Update app version
+      working-directory: .
+      run: |
+        VERSION_NUM="${{ steps.version.outputs.version_num }}"
+        echo "Updating version to ${VERSION_NUM}"
+
+        # Update config.xml
+        sed -i.bak "s/version=\"[^\"]*\"/version=\"${VERSION_NUM}\"/" config.xml
+
+        # Update package.json
+        node -e "const pkg=require('./package.json'); pkg.version='${VERSION_NUM}'; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
+
+        echo "Updated versions:"
+        grep "version=" config.xml | head -1
+        grep '"version"' package.json | head -1
+
+    - name: Install dependencies
+      working-directory: .
+      run: npm install
+
+    - name: Prepare package.json for local plugin
+      working-directory: .
+      run: |
+        # Remove plugin from package.json to prevent auto-fetch
+        node -e "const pkg=require('./package.json'); delete pkg.cordova.plugins['de-dl9rdz-rdzwx']; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
+
+    - name: Add iOS platform
+      working-directory: .
+      run: |
+        cordova platform add ios --verbose
+        cordova platform ls
+
+    - name: Add custom plugin
+      working-directory: .
+      run: |
+        cordova plugin add plugin-src/rdzwx-plugin/ --nofetch --verbose
+        cordova plugin ls
+
+    - name: Prepare iOS platform
+      working-directory: .
+      run: cordova prepare ios --verbose
+
+    - name: Build iOS for device (Release, unsigned)
+      working-directory: ./platforms/ios
+      run: |
+        # Build using xcodebuild directly with signing disabled
+        xcodebuild -workspace rdzSonde.xcworkspace \
+          -scheme rdzSonde \
+          -configuration Release \
+          -sdk iphoneos \
+          -destination 'generic/platform=iOS' \
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGN_IDENTITY="" \
+          DEVELOPMENT_TEAM="" \
+          build
+
+    - name: Create IPA from app bundle
+      working-directory: .
+      run: |
+        echo "=== Creating IPA from device build ==="
+
+        # Find the built .app bundle from Release-iphoneos
+        APP_PATH=$(find platforms/ios/build -name "rdzSonde.app" -path "*Release-iphoneos*" -type d 2>/dev/null | head -1)
+
+        # Also check DerivedData if not found in build directory
+        if [ -z "$APP_PATH" ]; then
+          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "rdzSonde.app" -path "*Release-iphoneos*" -type d 2>/dev/null | head -1)
+        fi
+
+        if [ -z "$APP_PATH" ]; then
+          echo "Error: Could not find rdzSonde.app"
+          echo "=== Available builds ==="
+          find platforms/ios/build -name "*.app" -type d
+          exit 1
+        fi
+
+        echo "Found app at: $APP_PATH"
+
+        # Create Payload directory structure for IPA
+        mkdir -p Payload
+        cp -R "$APP_PATH" Payload/
+
+        # Create IPA (which is just a zip file with specific structure)
+        zip -r rdzSonde-${{ steps.version.outputs.version }}.ipa Payload/
+
+        echo "Created IPA for AltStore"
+        ls -lh rdzSonde-${{ steps.version.outputs.version }}.ipa
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+
+        # Fetch all tags to ensure we have them (force to handle re-tagged versions)
+        git fetch --tags --force
+
+        # Get previous tag (excluding current version)
+        PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${VERSION}$" | head -1)
+
+        echo "Current version: ${VERSION}"
+        echo "Previous version: ${PREV_TAG}"
+
+        if [ -z "$PREV_TAG" ]; then
+          echo "changelog=Initial release" >> $GITHUB_OUTPUT
+        else
+          # Get commits since last tag, format them nicely
+          # Remove Co-Authored-By lines and empty lines
+          CHANGELOG=$(git log ${PREV_TAG}..${VERSION} --pretty=format:"- %s" --no-merges | grep -v "Co-Authored-By:" | grep -v "^$" | sed 's/[[:space:]]*$//')
+
+          # If no changelog, use a default message
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="Bug fixes and improvements"
+          fi
+
+          # Output for GitHub (multiline)
+          {
+            echo 'changelog<<EOF'
+            echo "$CHANGELOG"
+            echo EOF
+          } >> $GITHUB_OUTPUT
+        fi
+
+        echo "Generated changelog:"
+        cat $GITHUB_OUTPUT | grep -A100 "changelog" || true
+
+    - name: Generate AltStore source JSON
+      run: |
+        IPA_FILE="rdzSonde-${{ steps.version.outputs.version }}.ipa"
+        IPA_SIZE=$(stat -f%z "$IPA_FILE")
+        DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        VERSION="${{ steps.version.outputs.version }}"
+        VERSION_NUM="${{ steps.version.outputs.version_num }}"
+
+        # Escape changelog for JSON (convert newlines and special chars)
+        CHANGELOG=$(echo '${{ steps.changelog.outputs.changelog }}' | jq -Rs .)
+
+        cat > altstore-source.json << EOF
+        {
+          "name": "rdzSonde",
+          "identifier": "de.dl9rdz.rdzsonde-source",
+          "sourceURL": "https://github.com/trickv/rdzwx-go/releases/latest/download/altstore-source.json",
+          "apps": [
+            {
+              "name": "rdzSonde",
+              "bundleIdentifier": "de.dl9rdz",
+              "developerName": "Hansi Reiser (dl9rdz)",
+              "subtitle": "Radiosonde tracking for weather balloons",
+              "localizedDescription": "Track and visualize radiosondes (weather balloons) with real-time data from TTGO ESP32 devices. Features offline maps, GPS integration, and automatic device discovery.",
+              "iconURL": "https://raw.githubusercontent.com/trickv/rdzwx-go/main/./res/icon512.png",
+              "tintColor": "18bc9c",
+              "category": "utilities",
+              "screenshots": [],
+              "versions": [
+                {
+                  "version": "${VERSION_NUM}",
+                  "date": "${DATE}",
+                  "size": ${IPA_SIZE},
+                  "downloadURL": "https://github.com/trickv/rdzwx-go/releases/download/${VERSION}/${IPA_FILE}",
+                  "localizedDescription": ${CHANGELOG}
+                }
+              ],
+              "appPermissions": {
+                "entitlements": [
+                  "com.apple.security.get-task-allow"
+                ],
+                "privacy": {
+                  "NSLocalNetworkUsageDescription": "Used to discover and connect to TTGO radiosonde receivers on your local network",
+                  "NSLocationWhenInUseUsageDescription": "Used to display your current location on the map and calculate distances to radiosondes",
+                  "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs location access to track GPS position and share with TTGO devices."
+                }
+              }
+            }
+          ],
+          "news": []
+        }
+        EOF
+
+        echo "Generated altstore-source.json:"
+        cat altstore-source.json
+
+    - name: Upload IPA as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-artifacts
+        path: |
+          rdzSonde-${{ steps.version.outputs.version }}.ipa
+          altstore-source.json
+
+    - name: Create GitHub Release
+      run: |
+        cat > release-notes.md << EOF
+        ## rdzSonde ${{ steps.version.outputs.version_num }}
+
+        ### What's Changed
+        ${{ steps.changelog.outputs.changelog }}
+
+        ## Installation Options
+
+        **Option 1: AltStore Source (Recommended)**
+        1. Open AltStore on your iOS device
+        2. Go to the "Sources" tab
+        3. Add this URL: https://github.com/trickv/rdzwx-go/releases/latest/download/altstore-source.json
+        4. Install rdzSonde from your new source
+
+        **Option 2: Direct IPA Download**
+        1. Download the IPA file below
+        2. Open it in AltStore or use AltServer to sideload
+
+        ### Requirements
+        - iOS 13.0 or later
+        - AltStore installed on your device
+        EOF
+
+        gh release create "${{ steps.version.outputs.version }}" \
+          rdzSonde-${{ steps.version.outputs.version }}.ipa \
+          altstore-source.json \
+          --title "rdzSonde ${{ steps.version.outputs.version_num }}" \
+          --notes-file release-notes.md
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

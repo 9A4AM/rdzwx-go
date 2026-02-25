@@ -49,6 +49,47 @@
 	<lib-file src="src/android/libs/mapsforge-map-reader-master-0.16.0.jar" />
 	<lib-file src="src/android/libs/mapsforge-map-android-master-0.16.0.jar" />
 	<lib-file src="src/android/libs/androidsvg-1.4.jar" />
+        <framework src="src/android/build-extras.gradle" custom="true" type="gradleReference" />
+    </platform>
+    <platform name="ios">
+        <config-file target="config.xml" parent="/*">
+            <feature name="RdzWx">
+                <param name="ios-package" value="RdzWx" />
+            </feature>
+        </config-file>
+        <edit-config file="*-Info.plist" mode="merge" target="NSLocationWhenInUseUsageDescription">
+            <string>This app needs location access to track GPS position and share with TTGO devices.</string>
+        </edit-config>
+        <edit-config file="*-Info.plist" mode="merge" target="NSLocationAlwaysAndWhenInUseUsageDescription">
+            <string>This app needs location access to track GPS position and share with TTGO devices.</string>
+        </edit-config>
+        <edit-config file="*-Info.plist" mode="merge" target="NSLocalNetworkUsageDescription">
+            <string>This app needs local network access to discover and connect to TTGO ESP32 devices.</string>
+        </edit-config>
+        <edit-config file="*-Info.plist" mode="merge" target="NSBonjourServices">
+            <array>
+                <string>_jsonrdz._tcp</string>
+            </array>
+        </edit-config>
+        <edit-config file="*-Info.plist" mode="merge" target="com.apple.security.get-task-allow">
+            <true/>
+        </edit-config>
+        <header-file src="src/ios/RdzWx.h" />
+        <source-file src="src/ios/RdzWx.m" />
+        <source-file src="src/ios/JsonRdzHandler.h" />
+        <source-file src="src/ios/JsonRdzHandler.m" />
+        <source-file src="src/ios/GPSHandler.h" />
+        <source-file src="src/ios/GPSHandler.m" />
+        <source-file src="src/ios/MDNSHandler.h" />
+        <source-file src="src/ios/MDNSHandler.m" />
+        <source-file src="src/ios/WgsToEgm.h" />
+        <source-file src="src/ios/WgsToEgm.m" />
+        <source-file src="src/ios/OfflineTileCache.h" />
+        <source-file src="src/ios/OfflineTileCache.m" />
+        <resource-file src="src/android/assets/WW15MGH.DAC" />
+        <framework src="CoreLocation.framework" />
+        <framework src="Network.framework" weak="true" />
+        <framework src="MapKit.framework" />
     </platform>
 </plugin>
 
